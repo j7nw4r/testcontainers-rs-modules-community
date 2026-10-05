@@ -171,7 +171,7 @@ zookeeper-server-start zookeeper.properties &
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{borrow::Cow, time::Duration};
 
     use futures::StreamExt;
     use rdkafka::{
@@ -179,9 +179,50 @@ mod tests {
         producer::{FutureProducer, FutureRecord},
         ClientConfig, Message,
     };
-    use testcontainers::runners::AsyncRunner;
+    use testcontainers::{runners::AsyncRunner, Image, ImageExt};
 
     use crate::kafka;
+
+    #[test]
+    fn with_broker_hostname_updates_advertised_listeners() {
+        let image = kafka::Kafka::default()
+            .with_broker_hostname("first")
+            .with_broker_hostname("kafka");
+        let advertised_listeners = image
+            .env_vars()
+            .into_iter()
+            .find_map(|(name, value)| {
+                let name: Cow<'_, str> = name.into();
+                if name == "KAFKA_ADVERTISED_LISTENERS" {
+                    let value: Cow<'_, str> = value.into();
+                    Some(value.into_owned())
+                } else {
+                    None
+                }
+            })
+            .expect("KAFKA_ADVERTISED_LISTENERS must be set");
+
+        assert_eq!(
+            advertised_listeners,
+            "PLAINTEXT://localhost:9093,BROKER://kafka:9092"
+        );
+    }
+
+    #[tokio::test]
+    async fn produce_and_consume_messages_with_peer(
+    ) -> Result<(), Box<dyn std::error::Error + 'static>> {
+        kafka::tests::produce_and_consume_messages_with_peer(
+            "confluent-6-1-1",
+            kafka::KAFKA_PORT,
+            9092,
+            |hostname| {
+                kafka::Kafka::default()
+                    .with_broker_hostname(hostname)
+                    .with_tag("6.1.1")
+            },
+        )
+        .await
+    }
 
     #[tokio::test]
     async fn produce_and_consume_messages() -> Result<(), Box<dyn std::error::Error + 'static>> {
