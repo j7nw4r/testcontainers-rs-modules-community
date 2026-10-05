@@ -57,6 +57,7 @@ pub const DEFAULT_BROKER_ID: usize = 1;
 #[derive(Debug, Clone)]
 pub struct Kafka {
     env_vars: HashMap<String, String>,
+    broker_hostname: String,
 }
 
 impl Default for Kafka {
@@ -96,7 +97,45 @@ impl Default for Kafka {
         );
         env_vars.insert("CLUSTER_ID".to_owned(), DEFAULT_CLUSTER_ID.to_owned());
 
-        Self { env_vars }
+        Self {
+            env_vars,
+            broker_hostname: "localhost".to_string(),
+        }
+    }
+}
+
+impl Kafka {
+    /// Sets the hostname advertised to peer containers on the `BROKER` listener.
+    ///
+    /// The hostname defaults to `localhost`. Peer clients connect on port `9092`.
+    /// The hostname must resolve on the broker's Docker network. Use
+    /// [`ImageExt::with_network`](testcontainers::ImageExt::with_network) and
+    /// [`ImageExt::with_container_name`](testcontainers::ImageExt::with_container_name)
+    /// to place the broker and its peers on the same network and name the broker.
+    /// Host clients still connect through the mapped host port.
+    /// The last call replaces the previous hostname.
+    ///
+    /// # Example
+    /// ```
+    /// use testcontainers_modules::{kafka::Kafka, testcontainers::ImageExt};
+    ///
+    /// let kafka = Kafka::default()
+    ///     .with_broker_hostname("kafka")
+    ///     .with_network("kafka-network")
+    ///     .with_container_name("kafka");
+    /// ```
+    pub fn with_broker_hostname(mut self, hostname: impl Into<String>) -> Self {
+        self.broker_hostname = hostname.into();
+        self.env_vars.insert(
+            "KAFKA_ADVERTISED_LISTENERS".to_owned(),
+            format!(
+                "PLAINTEXT://localhost:{},BROKER://{}:9092",
+                KAFKA_PORT.as_u16(),
+                self.broker_hostname
+            ),
+        );
+
+        self
     }
 }
 
@@ -157,8 +196,9 @@ zookeeper-server-start zookeeper.properties &
             "1".to_string(),
             "--add-config".to_string(),
             format!(
-                "advertised.listeners=[PLAINTEXT://127.0.0.1:{},BROKER://localhost:9092]",
-                cs.host_port_ipv4(KAFKA_PORT)?
+                "advertised.listeners=[PLAINTEXT://127.0.0.1:{},BROKER://{}:9092]",
+                cs.host_port_ipv4(KAFKA_PORT)?,
+                self.broker_hostname
             ),
         ];
         let ready_conditions = vec![WaitFor::message_on_stdout(
